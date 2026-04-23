@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/branch-create
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+_read_tty() {
+  local var_name="$1"
+  local value
+
+  if [[ -r /dev/tty ]]; then
+    read -r value </dev/tty || return 1
+  else
+    read -r value || return 1
+  fi
+
+  printf -v "$var_name" '%s' "$value"
+}
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  require_clean
+  require_on_main
+
+  info "Syncing main from origin/main (ff-only)..."
+
+  git fetch origin
+  git switch main >/dev/null
+  git merge --ff-only origin/main
+
+  ok "... sync complete."
+
+  local type slug branch
+
+  info "Enter branch type: (feature|fix|refactor|chore|docs):"
+  printf '>>> ' >&2
+
+  _read_tty type || exit 1
+
+  case "$type" in
+  feature | fix | refactor | chore | docs) ;;
+  *)
+    err "Refusing: invalid branch type '$type'"
+    exit 1
+    ;;
+  esac
+
+  info "Enter branch slug (lowercase, digits, hyphens; e.g. add-login):"
+  printf '>>> ' >&2
+
+  _read_tty slug || exit 1
+
+  if [[ ! "$slug" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    err "Refusing: invalid branch slug '$slug'"
+    exit 1
+  fi
+
+  printf '\n'
+
+  branch="$type/$slug"
+
+  info "Creating branch '$branch' from main..."
+  git switch -c "$branch"
+  ok "... complete."
+}
+
+main "$@"

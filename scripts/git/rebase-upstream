@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/rebase-upstream
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  require_clean
+  require_on_feature
+  require_upstream
+
+  local in_rebase=0
+
+  cleanup() {
+    local rc=$?
+    set +e
+    if [[ $rc -ne 0 && "$in_rebase" -eq 1 ]]; then
+      warn "Rebase stopped (likely conflicts). Resolve them, then run:"
+      warn "  git rebase --continue   # after fixing conflicts"
+      warn "  git rebase --abort      # to abandon the rebase"
+    fi
+  }
+  trap cleanup EXIT
+
+  info "Rebasing branch onto its upstream..."
+
+  warn "About to rebase current branch onto its configured upstream."
+  "$ROOT_DIR/scripts/confirm"
+
+  git fetch --all --prune
+
+  in_rebase=1
+  git rebase '@{u}'
+  in_rebase=0
+
+  ok "... rebase complete."
+}
+
+main "$@"

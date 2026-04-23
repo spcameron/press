@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/push-upstream
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  require_clean
+  require_on_feature
+
+  local branch
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  info "Pushing '$branch' and setting upstream to origin..."
+  git push -u origin "$branch"
+  ok "... complete."
+}
+
+main "$@"
+

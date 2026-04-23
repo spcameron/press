@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/repair-main
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  require_clean
+  require_on_main
+
+  warn "About to create a backup branch and hard-reset main to origin/main."
+  "$ROOT_DIR/scripts/confirm"
+
+  info "Repairing main..."
+  printf '\n'
+
+  git fetch origin
+
+  local backup
+  backup="backup/main-local-$(date +%Y%m%d-%H%M%S)-$$"
+
+  info "Saving current main to '$backup'..."
+  git branch "$backup" HEAD
+  ok "... backup complete."
+
+  info "Resetting main to origin/main..."
+  git reset --hard origin/main
+  ok "... reset complete."
+
+  ok "... repair complete."
+  ok "Backup branch: '$backup'."
+}
+
+main "$@"

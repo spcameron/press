@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/mod-upgrade
+
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+
+main() {
+  need_cmd go-mod-upgrade
+
+  info "Running go-mod-upgrade..."
+  go-mod-upgrade
+  ok "... report complete."
+}
+
+main "$@"

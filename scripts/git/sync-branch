@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/sync-branch
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  require_clean
+  require_on_feature
+  require_upstream
+
+  warn "About to rebase onto upstream, then origin/main, run audit, and force-push with lease."
+  "$ROOT_DIR/scripts/confirm"
+
+  info "Syncing branch ..."
+
+  local in_rebase=0
+
+  cleanup() {
+    local rc=$?
+    set +e
+    if [[ $rc -ne 0 && "$in_rebase" -eq 1 ]]; then
+      warn "Rebase stopped (likely conflicts). Resolve them, then run:"
+      warn "  git rebase --continue   # after fixing conflicts"
+      warn "  git rebase --abort      # to abandon the rebase"
+    fi
+  }
+  trap cleanup EXIT
+
+  git fetch --all --prune
+
+  info "Rebasing branch onto upstream..."
+  in_rebase=1
+  git rebase '@{u}'
+  in_rebase=0
+  ok "... complete."
+
+  info "Rebasing branch onto origin/main..."
+  in_rebase=1
+  git rebase origin/main
+  in_rebase=0
+  ok "... complete."
+
+  "$ROOT_DIR/scripts/audit"
+
+  info "Pushing (force-with-lease)..."
+  git push --force-with-lease
+  ok "... complete."
+
+  ok "... sync complete."
+}
+
+main "$@"

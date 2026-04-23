@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/confirm
+#
+# Optional:
+#   FORCE=1  # intentional bypass
+
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+
+main() {
+  [[ "${FORCE:-}" == "1" ]] && exit 0
+
+  warn "Are you sure? [y/n]"
+  printf '>>> ' >&2
+
+  local ans
+
+  if [[ -r /dev/tty ]]; then
+    if ! read -r ans </dev/tty; then
+      exit 1
+    fi
+  else
+    if ! read -r ans; then
+      exit 1
+    fi
+  fi
+
+  case "$ans" in
+  y)
+    exit 0
+    ;;
+  *)
+    err "Refusing."
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"
+

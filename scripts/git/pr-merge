@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/pr-merge
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  scripts/git/pr-merge [--cleanup|-c]
+
+Options:
+  -c --cleanup    Sync main and delete local branch after merging PR
+EOF
+}
+
+main() {
+  case "${1:-}" in
+  -h | --help | help)
+    usage
+    exit 0
+    ;;
+  esac
+
+  cd "$ROOT_DIR"
+
+  local cleanup=0
+  local branch
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --cleanup | -c)
+      cleanup=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      err "Unknown option: $1"
+      exit 2
+      ;;
+    *)
+      err "Unexpected argument: $1"
+      exit 2
+      ;;
+    esac
+  done
+
+  need_cmd gh
+  need_cmd git
+  require_clean
+  require_on_feature
+
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  if ! gh pr view --json number >/dev/null; then
+    err "Unable to view PR for this branch."
+    warn "Run 'pr-create' to open one."
+    exit 1
+  fi
+
+  warn "About to merge the PR for branch '$branch'."
+  if [[ "$cleanup" -eq 1 ]]; then
+    warn "Cleanup will sync main and delete the local branch after merge."
+  fi
+  "$ROOT_DIR/scripts/confirm"
+
+  info "Merging PR for branch '$branch'..."
+  gh pr merge --squash
+  ok "... PR merge complete."
+
+  if [[ "$cleanup" -eq 1 ]]; then
+    info "Syncing main and cleaning up local branch..."
+
+    git fetch origin
+    git switch main >/dev/null
+    git merge --ff-only origin/main
+
+    # This guard should be unnecessary, require_on_feature already called.
+    # Still, provides defensive guard in case helper is faulty.
+    if [[ "$branch" == "main" ]]; then
+      err "Refusing to delete 'main'."
+      exit 1
+    fi
+
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      git branch -D "$branch"
+    fi
+
+    ok "... merge and cleanup complete."
+    exit 0
+  fi
+}
+
+main "$@"

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/branch-delete
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd git
+  need_cmd gh
+  require_clean
+  require_on_feature
+
+  local branch pr_output
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  pr_output=""
+
+  if pr_output="$(gh pr view --json number 2>&1)"; then
+    err "Refusing: There is an open PR for branch '$branch'."
+    exit 1
+  fi
+
+  if ! grep -qi "no pull requests found" <<<"$pr_output"; then
+    err "Unable to determine PR status for branch '$branch'."
+    printf '\n%s\n\n' "$pr_output" >&2
+    err "Refusing cleanup due to uncertain PR state."
+    exit 1
+  fi
+
+  warn "About to delete local branch '$branch' after syncing main."
+  "$ROOT_DIR/scripts/confirm"
+
+  # Purely defensive in case helper fails.
+  if [[ "$branch" == "main" ]]; then
+    err "Refusing to delete 'main'."
+    exit 1
+  fi
+
+  info "Syncing main and deleting local branch..."
+
+  git fetch origin
+  git switch main >/dev/null
+  git merge --ff-only origin/main
+  git branch -D "$branch"
+
+  ok "... cleanup complete."
+}
+
+main "$@"

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/test
+
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/paths.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  scripts/test [unit|race|cover]
+
+Commands:
+  unit     run tests (default)
+  race     run tests with race detector
+  cover    run tests, print total coverage, and open HTML report
+EOF
+}
+
+main() {
+  local cmd
+  local tmp
+
+  case "${1:-}" in
+  -h | --help | help)
+    usage
+    exit 0
+    ;;
+  esac
+
+  need_cmd go
+
+  cmd="${1:-unit}"
+
+  case "$cmd" in
+  unit)
+    info "Running tests..."
+    go test -buildvcs ./...
+    ok "... tests complete."
+    ;;
+  race)
+    info "Running tests with race detector..."
+    go test -race -buildvcs ./...
+    ok "... tests complete."
+    ;;
+  cover)
+    info "Running tests and displaying coverage..."
+
+    ensure_tmp_dir
+    tmp="$TMP_DIR/go-test-cover.$$.out"
+    trap 'rm -f "$tmp"' RETURN
+
+    go test -buildvcs -coverprofile="$tmp" ./...
+    go tool cover -func="$tmp" | tail -n 1
+    go tool cover -html="$tmp"
+
+    ok "... tests complete."
+    ;;
+  *)
+    usage
+    die "Unknown command: $cmd"
+    ;;
+  esac
+}
+
+main "$@"

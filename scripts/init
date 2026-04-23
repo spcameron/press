@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/init
+
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  scripts/init <app> <module>
+
+Arguments:
+  app       application name (e.g. scribe)
+  module    Go module path (e.g. github.com/spcameron/scribe)
+EOF
+}
+
+validate_app() {
+  local app="${1:?app required}"
+
+  [[ "$app" =~ ^[a-z][a-z0-9-]*$ ]] || {
+    die "Refusing: invalid app name '$app' (expected lowercase letters, digits, hyphens; must start with a letter)"
+  }
+}
+
+validate_module() {
+  local module="${1:?module required}"
+
+  [[ -n "$module" ]] || {
+    die "Refusing: module path must not be empty"
+  }
+
+  [[ ! "$module" =~ [[:space:]] ]] || {
+    die "Refusing: invalid module path '$module' (must not contain whitespace)"
+  }
+}
+
+require_uninitialized_project() {
+  local file="$ROOT_DIR/.project.toml"
+
+  require_file "$file" "Refusing: missing project config: $file"
+
+  if ! grep -q '^app = "__APP__"$' "$file"; then
+    die "Refusing: .project.toml does not contain the __APP__ placeholder. This repo appears to already be initialized."
+  fi
+}
+
+require_no_git_history() {
+  if [[ -d "$ROOT_DIR/.git" ]]; then
+    die "Refusing: .git directory exists. Remove starter history first (rm -rf .git)."
+  fi
+}
+
+set_app_name() {
+  local app="${1:?app required}"
+  local file="$ROOT_DIR/.project.toml"
+  local tmp
+
+  tmp="$file.tmp"
+
+  sed 's/^app = "__APP__"$/app = "'"$app"'"/' "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
+reset_go_module() {
+  local module="${1:?module required}"
+
+  rm -f "$ROOT_DIR/go.mod" "$ROOT_DIR/go.sum"
+
+  (
+    cd "$ROOT_DIR"
+    go mod init "$module"
+  )
+}
+
+reset_readme() {
+  local app="${1:?app required}"
+
+  cat >"$ROOT_DIR/README.md" <<EOF
+# $app
+EOF
+}
+
+main() {
+  local app
+  local module
+
+  case "${1:-}" in
+  -h | --help | help)
+    usage
+    exit 0
+    ;;
+  esac
+
+  [[ $# -eq 2 ]] || {
+    usage
+    exit 2
+  }
+
+  require_no_git_history
+
+  app="$1"
+  module="$2"
+
+  need_cmd go
+  need_cmd sed
+  need_cmd grep
+
+  validate_app "$app"
+  validate_module "$module"
+  require_uninitialized_project
+
+  info "Initializing project..."
+  printf '\n'
+
+  info "Setting app name to '$app'..."
+  set_app_name "$app"
+  ok "... complete."
+
+  info "Recreating Go module as '$module'..."
+  reset_go_module "$module"
+  ok "... complete."
+
+  info "Resetting README..."
+  reset_readme "$app"
+  ok "... complete."
+
+  printf '\n'
+  ok "... initialization complete."
+  info "Next steps:"
+  info "  mise install"
+  info "  just test"
+  info "  git init"
+  info "  git add ."
+  info "  git commit -m \"Initial commit from starter\""
+  info "  gh repo create $app --public --source=. --remote=origin --push"
+}
+
+main "$@"

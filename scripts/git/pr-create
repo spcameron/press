@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# scripts/git/pr-create
+
+set -euo pipefail
+
+ROOT_DIR="${ROOT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+source "$ROOT_DIR/scripts/lib/lib.sh"
+source "$ROOT_DIR/scripts/lib/git.sh"
+
+main() {
+  cd "$ROOT_DIR"
+
+  need_cmd gh
+  need_cmd git
+  require_clean
+  require_on_feature
+
+  "$ROOT_DIR/scripts/audit"
+  "$ROOT_DIR/scripts/test"
+
+  info "Creating PR..."
+  gh pr create --fill-verbose --editor
+  ok "... complete."
+}
+
+main "$@"
+

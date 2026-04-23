@@ -1,0 +1,9 @@
+[tools]
+go = '1.26.2'
+gh = '2.73.0'
+just = '1.49.0'
+
+"go:honnef.co/go/tools/cmd/staticcheck" = '0.7.0'
+"go:golang.org/x/vuln/cmd/govulncheck" = '1.1.4'
+"go:github.com/oligot/go-mod-upgrade" = '0.12.0'
+
