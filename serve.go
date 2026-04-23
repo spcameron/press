@@ -26,6 +26,8 @@ func Serve(opts ServeOptions) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.Dir(dir)))
 
+	fmt.Printf("serve: serving %s on http://%s\n", dir, addr)
+
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		return fmt.Errorf("listen: %s: %w", addr, err)
 	}
