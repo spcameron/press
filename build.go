@@ -19,24 +19,32 @@ type BuildOptions struct {
 	OnWrite func(path string)
 }
 
-type SiteData struct{}
+type SiteData struct {
+	Title         string
+	StylesheetURL string
+}
+
+type PageData struct {
+	Site  SiteData
+	Title string
+}
 
 type HomePageData struct {
-	Site SiteData
+	Page PageData
 }
 
 type BlogIndexPageData struct {
-	Site  SiteData
+	Page  PageData
 	Posts []Post
 }
 
 type BlogPostPageData struct {
-	Site SiteData
+	Page PageData
 	Post Post
 }
 
-func Build(opts BuildOptions, r Renderers) error {
-	ctx, err := newBuildContext(opts, r)
+func Build(opts BuildOptions, site SiteData, r Renderers) error {
+	ctx, err := newBuildContext(opts, site, r)
 	if err != nil {
 		return err
 	}
@@ -45,9 +53,11 @@ func Build(opts BuildOptions, r Renderers) error {
 		return err
 	}
 
-	// TODO: loadPosts
+	if err := ctx.loadPosts(); err != nil {
+		return err
+	}
 
-	if err := renderSite(ctx); err != nil {
+	if err := ctx.renderSite(); err != nil {
 		return err
 	}
 
@@ -59,31 +69,68 @@ func Build(opts BuildOptions, r Renderers) error {
 }
 
 type buildContext struct {
-	clean          bool
 	outDir         string
+	clean          bool
+	contentDir     string
 	staticDir      string
 	assetsBasePath string
-	site           SiteData
-	r              Renderers
-	onWrite        func(path string)
+
+	site  SiteData
+	posts []Post
+
+	r       Renderers
+	onWrite func(path string)
 }
 
-func renderSite(ctx buildContext) error {
+func (ctx *buildContext) renderSite() error {
 	if err := ctx.buildHome(); err != nil {
+		return err
+	}
+
+	if err := ctx.buildBlogIndex(); err != nil {
+		return err
+	}
+
+	if err := ctx.buildBlogPosts(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (ctx buildContext) buildHome() error {
+func (ctx *buildContext) loadPosts() error {
+	candidates, err := discoverPosts(ctx.contentDir)
+	if err != nil {
+		return err
+	}
+
+	posts, err := parsePosts(candidates)
+	if err != nil {
+		return err
+	}
+
+	if err := validatePosts(posts); err != nil {
+		return err
+	}
+
+	sortPosts(posts)
+	assignPostURLs(posts)
+
+	ctx.posts = posts
+	return nil
+}
+
+func (ctx *buildContext) buildHome() error {
 	if ctx.r.Home == nil {
 		return fmt.Errorf("missing Home renderer")
 	}
 
 	path := filepath.Join(ctx.outDir, "index.html")
 	data := HomePageData{
-		Site: ctx.site,
+		Page: PageData{
+			Site:  ctx.site,
+			Title: "Home",
+		},
 	}
 
 	return ctx.writeRendered(path, func(w io.Writer) error {
@@ -91,7 +138,56 @@ func (ctx buildContext) buildHome() error {
 	})
 }
 
-func (ctx buildContext) prepareOutput() error {
+func (ctx *buildContext) buildBlogIndex() error {
+	if ctx.r.BlogIndex == nil {
+		return fmt.Errorf("missing BlogIndex renderer")
+	}
+
+	path := blogIndexOutputPath(ctx.outDir)
+	data := BlogIndexPageData{
+		Page: PageData{
+			Site:  ctx.site,
+			Title: "Blog",
+		},
+		Posts: ctx.posts,
+	}
+
+	return ctx.writeRendered(path, func(w io.Writer) error {
+		return ctx.r.BlogIndex(w, data)
+	})
+}
+
+func (ctx *buildContext) buildBlogPosts() error {
+	if ctx.r.BlogPost == nil {
+		return fmt.Errorf("missing BlogPost renderer")
+	}
+
+	for _, p := range ctx.posts {
+		path := postOutputPath(ctx.outDir, p.Slug)
+
+		data := BlogPostPageData{
+			Page: PageData{
+				Site:  ctx.site,
+				Title: p.Title,
+			},
+			Post: p,
+		}
+
+		if err := ctx.writeRendered(path, func(w io.Writer) error {
+			return ctx.r.BlogPost(w, data)
+		}); err != nil {
+			return err
+		}
+
+		if err := ctx.syncPostMedia(p); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (ctx *buildContext) prepareOutput() error {
 	if ctx.clean {
 		if err := os.RemoveAll(ctx.outDir); err != nil {
 			return fmt.Errorf("clean output dir: %s: %w", ctx.outDir, err)
@@ -105,7 +201,7 @@ func (ctx buildContext) prepareOutput() error {
 	return nil
 }
 
-func (ctx buildContext) syncAssets() error {
+func (ctx *buildContext) syncAssets() error {
 	assetsDir := filepath.Join(ctx.outDir, ctx.assetsBasePath)
 	if err := syncStaticAssets(ctx.staticDir, assetsDir, ctx.onWrite); err != nil {
 		return err
@@ -114,7 +210,19 @@ func (ctx buildContext) syncAssets() error {
 	return nil
 }
 
-func newBuildContext(opts BuildOptions, r Renderers) (buildContext, error) {
+func (ctx *buildContext) syncPostMedia(p Post) error {
+	if err := syncDirIfExists(
+		postMediaSourceDir(p),
+		postMediaOutputDir(ctx.outDir, p.Slug),
+		ctx.onWrite,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func newBuildContext(opts BuildOptions, site SiteData, r Renderers) (buildContext, error) {
 	outDir, err := cleanBuildPath("output dir", opts.OutDir)
 	if err != nil {
 		return buildContext{}, err
@@ -125,28 +233,23 @@ func newBuildContext(opts BuildOptions, r Renderers) (buildContext, error) {
 		return buildContext{}, err
 	}
 
-	assetsBasePath := opts.AssetsBasePath
-	if assetsBasePath == "" {
-		assetsBasePath = "assets"
+	contentDir, err := cleanBuildPath("content dir", opts.ContentDir)
+	if err != nil {
+		return buildContext{}, err
 	}
 
-	assetsBasePath = filepath.Clean(assetsBasePath)
-	if assetsBasePath == "." {
-		return buildContext{}, fmt.Errorf("invalid assets base path: %q", opts.AssetsBasePath)
-	}
-	if filepath.IsAbs(assetsBasePath) {
-		return buildContext{}, fmt.Errorf("assets base path must be relative: %q", opts.AssetsBasePath)
-	}
-	if assetsBasePath == ".." || strings.HasPrefix(assetsBasePath, ".."+string(filepath.Separator)) {
-		return buildContext{}, fmt.Errorf("assets base path escapes output dir: %q", opts.AssetsBasePath)
+	assetsBasePath, err := cleanRelativeBuildPath("assets base path", opts.AssetsBasePath)
+	if err != nil {
+		return buildContext{}, err
 	}
 
 	return buildContext{
 		clean:          opts.Clean,
 		outDir:         outDir,
+		contentDir:     contentDir,
 		staticDir:      staticDir,
 		assetsBasePath: assetsBasePath,
-		site:           SiteData{},
+		site:           site,
 		r:              r,
 		onWrite:        opts.OnWrite,
 	}, nil
@@ -160,6 +263,25 @@ func cleanBuildPath(name, path string) (string, error) {
 	clean := filepath.Clean(path)
 	if clean == "." {
 		return "", fmt.Errorf("refusing unsafe %s: %q", name, path)
+	}
+
+	return clean, nil
+}
+
+func cleanRelativeBuildPath(name, path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("%s is required", name)
+	}
+
+	clean := filepath.Clean(path)
+	if clean == "." {
+		return "", fmt.Errorf("refusing unsafe %s: %q", name, path)
+	}
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("%s must be relative: %q", name, path)
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s escapes output dir: %q", name, path)
 	}
 
 	return clean, nil
