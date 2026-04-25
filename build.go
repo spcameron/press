@@ -12,6 +12,7 @@ type BuildOptions struct {
 	OutDir string
 	Clean  bool
 
+	ContentDir     string
 	StaticDir      string
 	AssetsBasePath string
 
@@ -24,6 +25,16 @@ type HomePageData struct {
 	Site SiteData
 }
 
+type BlogIndexPageData struct {
+	Site  SiteData
+	Posts []Post
+}
+
+type BlogPostPageData struct {
+	Site SiteData
+	Post Post
+}
+
 func Build(opts BuildOptions, r Renderers) error {
 	ctx, err := newBuildContext(opts, r)
 	if err != nil {
@@ -33,6 +44,8 @@ func Build(opts BuildOptions, r Renderers) error {
 	if err := ctx.prepareOutput(); err != nil {
 		return err
 	}
+
+	// TODO: loadPosts
 
 	if err := renderSite(ctx); err != nil {
 		return err

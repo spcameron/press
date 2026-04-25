@@ -5,5 +5,7 @@ import (
 )
 
 type Renderers struct {
-	Home func(w io.Writer, data HomePageData) error
+	Home      func(io.Writer, HomePageData) error
+	BlogIndex func(io.Writer, BlogIndexPageData) error
+	BlogPost  func(io.Writer, BlogPostPageData) error
 }
