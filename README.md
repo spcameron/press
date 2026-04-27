@@ -28,7 +28,7 @@ Where:
 
 ## Model
 
-press follows a staged build pipeline:
+`press` follows a staged build pipeline:
 
 ```
 discover → parse → validate → sort → route → render → write → sync assets
@@ -49,7 +49,7 @@ Each stage has a clear responsibility:
 
 ## Conventions
 
-press is intentionally opinionated.
+`press` is intentionally opinionated.
 
 ### Content structure
 
@@ -104,7 +104,7 @@ slug: my-page
 
 ## Rendering
 
-press does not own templates.
+`press` does not own templates.
 
 You provide renderers:
 
@@ -200,7 +200,7 @@ The system is designed to be mechanically simple and easy to reason about.
 
 ## Status
 
-press is currently a focused tool for personal sites.
+`press` is currently a focused tool for personal sites.
 
 Future work may include:
 
