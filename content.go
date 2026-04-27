@@ -30,6 +30,17 @@ var (
 	ErrOpeningFenceNotTerminated = errors.New("opening fence missing terminating newline")
 )
 
+type StaticPage struct {
+	SourcePath string
+	SourceDir  string
+
+	Slug  string
+	URL   string
+	Title string
+
+	Body HTML
+}
+
 type Post struct {
 	SourcePath string
 	SourceDir  string
@@ -52,20 +63,36 @@ type HTML interface {
 	Write(io.Writer) error
 }
 
+func discoverStaticPages(contentRoot string) ([]string, error) {
+	return discoverIndexMarkdownFiles(contentRoot, "pages")
+}
+
 func discoverPosts(contentRoot string) ([]string, error) {
+	return discoverIndexMarkdownFiles(contentRoot, "posts")
+}
+
+func discoverIndexMarkdownFiles(contentRoot, section string) ([]string, error) {
+	if strings.TrimSpace(section) == "" {
+		return nil, fmt.Errorf("section is required")
+	}
+
+	if filepath.IsAbs(section) || section == "." || section == ".." || strings.HasPrefix(section, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("invalid content section: %q", section)
+	}
+
 	if err := requireDir(contentRoot); err != nil {
 		return nil, err
 	}
 
-	postsDir := filepath.Join(contentRoot, "posts")
+	sectionDir := filepath.Clean(filepath.Join(contentRoot, section))
 
-	if err := requireDir(postsDir); err != nil {
+	if err := requireDir(sectionDir); err != nil {
 		return nil, err
 	}
 
 	var candidates []string
 
-	if walkErr := filepath.WalkDir(postsDir, func(path string, d fs.DirEntry, err error) error {
+	if walkErr := filepath.WalkDir(sectionDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk %s: %w", path, err)
 		}
@@ -84,20 +111,32 @@ func discoverPosts(contentRoot string) ([]string, error) {
 		}
 
 		if strings.EqualFold(name, "index.md") {
-			if filepath.Clean(filepath.Dir(path)) == filepath.Clean(postsDir) {
+			if filepath.Clean(filepath.Dir(path)) == sectionDir {
 				return nil
 			}
 			candidates = append(candidates, path)
 		}
 
 		return nil
-
 	}); walkErr != nil {
 		return nil, walkErr
 	}
 
 	sort.Strings(candidates)
 	return candidates, nil
+}
+
+func parseStaticPages(paths []string) ([]StaticPage, error) {
+	var pages []StaticPage
+	for _, s := range paths {
+		p, err := parseStaticPage(s)
+		if err != nil {
+			return nil, err
+		}
+		pages = append(pages, p)
+	}
+
+	return pages, nil
 }
 
 func parsePosts(paths []string) ([]Post, error) {
@@ -113,25 +152,61 @@ func parsePosts(paths []string) ([]Post, error) {
 	return posts, nil
 }
 
-func parsePost(path string) (Post, error) {
+func parseStaticPage(path string) (StaticPage, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Post{}, err
+		return StaticPage{}, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	fmBytes, mdBytes, err := splitPost(data)
+	fmBytes, mdBytes, err := splitFrontMatter(data)
 	if err != nil {
-		return Post{}, err
+		return StaticPage{}, fmt.Errorf("split frontmatter %s: %w", path, err)
 	}
 
-	fm, err := decodeFrontMatter(fmBytes)
+	fm, err := decodeStaticPageFrontMatter(fmBytes)
 	if err != nil {
-		return Post{}, err
+		return StaticPage{}, fmt.Errorf("decode frontmatter %s: %w", path, err)
 	}
 
 	md, err := scribe.Compile(string(mdBytes))
 	if err != nil {
-		return Post{}, err
+		return StaticPage{}, fmt.Errorf("compile markdown %s: %w", path, err)
+	}
+
+	clean := filepath.Clean(path)
+
+	page := StaticPage{
+		SourcePath: clean,
+		SourceDir:  filepath.Dir(clean),
+
+		Slug:  fm.slug,
+		Title: fm.title,
+
+		Body: md,
+	}
+
+	return page, nil
+}
+
+func parsePost(path string) (Post, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Post{}, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	fmBytes, mdBytes, err := splitFrontMatter(data)
+	if err != nil {
+		return Post{}, fmt.Errorf("split frontmatter %s: %w", path, err)
+	}
+
+	fm, err := decodePostFrontMatter(fmBytes)
+	if err != nil {
+		return Post{}, fmt.Errorf("decode frontmatter %s: %w", path, err)
+	}
+
+	md, err := scribe.Compile(string(mdBytes))
+	if err != nil {
+		return Post{}, fmt.Errorf("compile markdown %s: %w", path, err)
 	}
 
 	clean := filepath.Clean(path)
@@ -150,7 +225,129 @@ func parsePost(path string) (Post, error) {
 	return post, nil
 }
 
-func splitPost(src []byte) (fmBytes, mdBytes []byte, err error) {
+func decodeStaticPageFrontMatter(data []byte) (frontMatter, error) {
+	var raw struct {
+		Title string `yaml:"title"`
+		Slug  string `yaml:"slug"`
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(&raw); err != nil {
+		return frontMatter{}, fmt.Errorf("%w: %v", ErrInvalidFrontMatter, err)
+	}
+
+	if strings.TrimSpace(raw.Title) == "" {
+		return frontMatter{}, ErrMissingTitle
+	}
+	if strings.TrimSpace(raw.Slug) == "" {
+		return frontMatter{}, ErrMissingSlug
+	}
+
+	fm := frontMatter{
+		title: raw.Title,
+		slug:  raw.Slug,
+	}
+
+	return fm, nil
+}
+
+func decodePostFrontMatter(data []byte) (frontMatter, error) {
+	var raw struct {
+		Title string `yaml:"title"`
+		Slug  string `yaml:"slug"`
+		Date  string `yaml:"date"`
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(&raw); err != nil {
+		return frontMatter{}, fmt.Errorf("%w: %v", ErrInvalidFrontMatter, err)
+	}
+
+	if strings.TrimSpace(raw.Title) == "" {
+		return frontMatter{}, ErrMissingTitle
+	}
+	if strings.TrimSpace(raw.Slug) == "" {
+		return frontMatter{}, ErrMissingSlug
+	}
+	if strings.TrimSpace(raw.Date) == "" {
+		return frontMatter{}, ErrMissingDate
+	}
+
+	t, err := time.Parse("2006-01-02", raw.Date)
+	if err != nil {
+		return frontMatter{}, fmt.Errorf("decode: %w (expected YYYY-MM-DD): %q", ErrInvalidDate, raw.Date)
+	}
+
+	fm := frontMatter{
+		title: raw.Title,
+		slug:  raw.Slug,
+		date:  t,
+	}
+
+	return fm, nil
+}
+
+func validateStaticPages(pages []StaticPage) error {
+	reserved := map[string]struct{}{
+		"blog":   {},
+		"assets": {},
+	}
+
+	seen := make(map[string]struct{}, len(pages))
+
+	for _, p := range pages {
+		s := strings.TrimSpace(p.Slug)
+
+		if s == "" {
+			return ErrMissingSlug
+		}
+
+		if _, ok := reserved[s]; ok {
+			return fmt.Errorf("static page slug %q is reserved", s)
+		}
+
+		if _, ok := seen[s]; ok {
+			return fmt.Errorf("validate static pages: duplicate slug: %q", s)
+		}
+
+		seen[s] = struct{}{}
+	}
+
+	return nil
+}
+
+func validatePosts(posts []Post) error {
+	seen := make(map[string]struct{}, len(posts))
+	for _, p := range posts {
+		s := strings.TrimSpace(p.Slug)
+		if s == "" {
+			return ErrMissingSlug
+		}
+
+		if _, ok := seen[s]; ok {
+			return fmt.Errorf("validate posts: duplicate slug: %q", s)
+		}
+
+		seen[s] = struct{}{}
+	}
+
+	return nil
+}
+
+func sortPosts(posts []Post) {
+	sort.Slice(posts, func(i, j int) bool {
+		if !posts[i].Date.Equal(posts[j].Date) {
+			return posts[i].Date.After(posts[j].Date)
+		}
+		return posts[i].Title < posts[j].Title
+	})
+}
+
+func splitFrontMatter(src []byte) (fmBytes, mdBytes []byte, err error) {
 	if len(src) == 0 {
 		return nil, nil, ErrEmptyFile
 	}
@@ -190,71 +387,6 @@ func splitPost(src []byte) (fmBytes, mdBytes []byte, err error) {
 	}
 
 	return nil, nil, ErrMissingClosingFence
-}
-
-func decodeFrontMatter(data []byte) (frontMatter, error) {
-	var raw struct {
-		Title string `yaml:"title"`
-		Slug  string `yaml:"slug"`
-		Date  string `yaml:"date"`
-	}
-
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-
-	if err := dec.Decode(&raw); err != nil {
-		return frontMatter{}, fmt.Errorf("%w: %v", ErrInvalidFrontMatter, err)
-	}
-
-	if strings.TrimSpace(raw.Title) == "" {
-		return frontMatter{}, ErrMissingTitle
-	}
-	if strings.TrimSpace(raw.Slug) == "" {
-		return frontMatter{}, ErrMissingSlug
-	}
-	if strings.TrimSpace(raw.Date) == "" {
-		return frontMatter{}, ErrMissingDate
-	}
-
-	t, err := time.Parse("2006-01-02", raw.Date)
-	if err != nil {
-		return frontMatter{}, fmt.Errorf("decode: %w (expected YYYY-MM-DD): %q", ErrInvalidDate, raw.Date)
-	}
-
-	fm := frontMatter{
-		title: raw.Title,
-		slug:  raw.Slug,
-		date:  t,
-	}
-
-	return fm, nil
-}
-
-func validatePosts(posts []Post) error {
-	seen := make(map[string]struct{}, len(posts))
-	for _, p := range posts {
-		s := strings.TrimSpace(p.Slug)
-		if s == "" {
-			return ErrMissingSlug
-		}
-
-		if _, ok := seen[s]; ok {
-			return fmt.Errorf("validate: duplicate slug: %q", s)
-		}
-
-		seen[s] = struct{}{}
-	}
-
-	return nil
-}
-
-func sortPosts(posts []Post) {
-	sort.Slice(posts, func(i, j int) bool {
-		if !posts[i].Date.Equal(posts[j].Date) {
-			return posts[i].Date.After(posts[j].Date)
-		}
-		return posts[i].Title < posts[j].Title
-	})
 }
 
 func requireDir(path string) error {

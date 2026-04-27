@@ -33,6 +33,11 @@ type HomePageData struct {
 	Page PageData
 }
 
+type StaticPageData struct {
+	Page       PageData
+	StaticPage StaticPage
+}
+
 type BlogIndexPageData struct {
 	Page  PageData
 	Posts []Post
@@ -57,6 +62,10 @@ func Build(opts BuildOptions, site SiteData, r Renderers) error {
 		return err
 	}
 
+	if err := ctx.loadStaticPages(); err != nil {
+		return err
+	}
+
 	if err := ctx.renderSite(); err != nil {
 		return err
 	}
@@ -75,8 +84,9 @@ type buildContext struct {
 	staticDir      string
 	assetsBasePath string
 
-	site  SiteData
-	posts []Post
+	site        SiteData
+	staticPages []StaticPage
+	posts       []Post
 
 	r       Renderers
 	onWrite func(path string)
@@ -84,6 +94,10 @@ type buildContext struct {
 
 func (ctx *buildContext) renderSite() error {
 	if err := ctx.buildHome(); err != nil {
+		return err
+	}
+
+	if err := ctx.buildStaticPages(); err != nil {
 		return err
 	}
 
@@ -120,6 +134,27 @@ func (ctx *buildContext) loadPosts() error {
 	return nil
 }
 
+func (ctx *buildContext) loadStaticPages() error {
+	candidates, err := discoverStaticPages(ctx.contentDir)
+	if err != nil {
+		return err
+	}
+
+	pages, err := parseStaticPages(candidates)
+	if err != nil {
+		return err
+	}
+
+	if err := validateStaticPages(pages); err != nil {
+		return err
+	}
+
+	assignStaticPageURLs(pages)
+
+	ctx.staticPages = pages
+	return nil
+}
+
 func (ctx *buildContext) buildHome() error {
 	if ctx.r.Home == nil {
 		return fmt.Errorf("missing Home renderer")
@@ -136,6 +171,32 @@ func (ctx *buildContext) buildHome() error {
 	return ctx.writeRendered(path, func(w io.Writer) error {
 		return ctx.r.Home(w, data)
 	})
+}
+
+func (ctx *buildContext) buildStaticPages() error {
+	if ctx.r.StaticPage == nil {
+		return fmt.Errorf("missing StaticPage renderer")
+	}
+
+	for _, p := range ctx.staticPages {
+		path := staticPageOutputPath(ctx.outDir, p.Slug)
+
+		data := StaticPageData{
+			Page: PageData{
+				Site:  ctx.site,
+				Title: p.Title,
+			},
+			StaticPage: p,
+		}
+
+		if err := ctx.writeRendered(path, func(w io.Writer) error {
+			return ctx.r.StaticPage(w, data)
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (ctx *buildContext) buildBlogIndex() error {
