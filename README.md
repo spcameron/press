@@ -4,9 +4,9 @@
 
 It builds a site from:
 
-- a `content/` directory of Markdown posts with frontmatter
+- a `content/` directory of Markdown content (posts and standalone pages)
 - a set of templ renderers
-- a conventional blog structure
+- a small, explicit site model (home, blog, and static pages)
 
 and produces a fully static HTML output.
 
@@ -36,10 +36,10 @@ discover → parse → validate → sort → route → render → write → sync
 
 Each stage has a clear responsibility:
 
-- **discover**: find post files in `content/posts/`
+- **discover**: find content files in `content/posts/` and `content/pages/`
 - **parse**: split frontmatter and Markdown
 - **validate**: enforce required fields and invariants
-- **sort**: establish canonical ordering (newest first)
+- **sort**: establish canonical ordering (posts only)
 - **route**: assign URLs
 - **render**: generate HTML via user-provided templates
 - **write**: emit files to the output directory
@@ -59,6 +59,11 @@ content/
     my-post/
       index.md
       media/
+  pages/
+    about/
+      index.md
+    teaching/
+      index.md
 ```
 
 ### Frontmatter
@@ -73,12 +78,21 @@ date: 2026-04-25
 ---
 ```
 
+Each static page must define:
+
+```yaml
+---
+title: My Page
+slug: my-page
+```
+
 ### Routes
 
 ```
 /              → home
 /blog/         → blog index
 /blog/{slug}/  → post
+/{slug}/       → static page
 ```
 
 ### Assets
@@ -99,6 +113,7 @@ type Renderers struct {
     Home      func(io.Writer, HomePageData) error
     BlogIndex func(io.Writer, BlogIndexPageData) error
     BlogPost  func(io.Writer, BlogPostPageData) error
+    StaticPage func(io.Writer, StaticPageData) error
 }
 ```
 
@@ -132,6 +147,20 @@ type Post struct {
 - `URL` is assigned during routing
 - `Body` is precompiled HTML
 
+### StaticPage
+
+```go
+type StaticPage struct{
+    Slug  string
+    URL   string
+    Title string
+    Body  HTML
+}
+```
+
+- `URL` is assigned during routing
+- `Body` is precompiled HTML
+
 ### PageData
 
 ```go
@@ -154,13 +183,16 @@ type SiteData struct {
 
 ## Philosophy
 
-press treats content as structured data and HTML as a target format.
+`press` is not intended to be a general-purpose SSG. It is designed for personal sites with a small number of well-defined page types, where explicit structure is preferred over extensibility.
+
+`press` treats content as structured data and HTML as a target format.
 
 It favors:
 
 - explicit structure over implicit behavior
 - predictable conventions over configuration
 - staged transformations over ad hoc rendering
+- a small, fixed content model over open-ended flexibility
 
 The system is designed to be mechanically simple and easy to reason about.
 
